@@ -58,6 +58,8 @@ const Icon = {
   Warn: ({ s = 14 }) => <svg width={s} height={s} viewBox="0 0 14 14" fill="none"><path d="M7 1L1 13h12L7 1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" /><path d="M7 5.5v3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /><circle cx="7" cy="10.5" r="0.6" fill="currentColor" /></svg>,
   Parallel: ({ s = 12 }) => <svg width={s} height={s} viewBox="0 0 12 12" fill="none"><path d="M2 3h8M2 6h6M2 9h8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>,
   Grip: ({ s = 12 }) => <svg width={s} height={s} viewBox="0 0 12 12" fill="none"><circle cx="4" cy="2.5" r="1" fill="currentColor"/><circle cx="8" cy="2.5" r="1" fill="currentColor"/><circle cx="4" cy="6" r="1" fill="currentColor"/><circle cx="8" cy="6" r="1" fill="currentColor"/><circle cx="4" cy="9.5" r="1" fill="currentColor"/><circle cx="8" cy="9.5" r="1" fill="currentColor"/></svg>,
+  Eye: ({ s = 14 }) => <svg width={s} height={s} viewBox="0 0 14 14" fill="none"><path d="M1 7s2.5-4 6-4 6 4 6 4-2.5 4-6 4-6-4-6-4z" stroke="currentColor" strokeWidth="1.2"/><circle cx="7" cy="7" r="2" stroke="currentColor" strokeWidth="1.2"/></svg>,
+  EyeOff: ({ s = 14 }) => <svg width={s} height={s} viewBox="0 0 14 14" fill="none"><path d="M1 7s2.5-4 6-4 6 4 6 4-2.5 4-6 4-6-4-6-4z" stroke="currentColor" strokeWidth="1.2"/><path d="M2 12L12 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>,
 }
 
 // ─── Small Components ────────────────────────────────────────────────
@@ -772,6 +774,18 @@ export default function App() {
   const [loadInput, setLoadInput] = useState('')
   const [saveMsg, setSaveMsg] = useState('')
 
+  // Skip rebuild flag — when AI/load sets phases directly, don't let rebuildPhases overwrite
+  const skipRebuildRef = useRef(false)
+
+  // AI generation state
+  const [showAiPanel, setShowAiPanel] = useState(false)
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [aiSuccess, setAiSuccess] = useState('')
+  const [aiPassphrase, setAiPassphrase] = useState(() => sessionStorage.getItem('postrack_pass') || '')
+  const [showPassphrase, setShowPassphrase] = useState(false)
+
   const generateSaveCode = useCallback(() => {
     const state = {
       v: 1, projectName, kickoff, delivery, bizDays, deliverables, teamSize,
@@ -792,37 +806,44 @@ export default function App() {
     })
   }, [generateSaveCode])
 
+  const applyScheduleState = useCallback((state) => {
+    skipRebuildRef.current = true
+    setProjectName(state.projectName || 'Untitled Project')
+    setKickoff(state.kickoff || isoDate(new Date()))
+    setDelivery(state.delivery || '')
+    setBizDays(state.bizDays ?? true)
+    setDeliverables(state.deliverables || { ctv: 1, social: 2, cutdown: 0 })
+    setTeamSize(state.teamSize || 1)
+    setSplitStreams(state.splitStreams || false)
+    setFinishing(state.finishing || { color: false, mix: false, resizes: false })
+    setResizeFormats(state.resizeFormats || 4)
+    setSelectedFormats(state.selectedFormats || ['9:16', '4:5', '1:1', '16:9'])
+    if (state.phases && state.phases.length > 0) {
+      // AI and save codes provide complete phase lists — use directly
+      setPhases(state.phases.map((p, i) => ({
+        id: p.id || String(i + 1),
+        name: p.name,
+        baseDuration: p.manualDuration || p.baseDuration || 1,
+        type: p.type || 'internal',
+        enabled: p.enabled ?? true,
+        defaultOffset: p.manualStartOffset ?? i,
+        manualDuration: p.manualDuration || null,
+        manualStartOffset: p.manualStartOffset ?? null,
+        autoLabel: p.autoLabel || null,
+        computed: p.computed || null,
+        lane: p.lane,
+        laneGroup: p.laneGroup,
+        stream: p.stream,
+        streamStart: p.streamStart,
+        finishing: p.finishing,
+      })))
+    }
+  }, [])
+
   const handleLoad = useCallback(() => {
     try {
       const state = JSON.parse(decodeURIComponent(escape(atob(loadInput.trim()))))
-      if (state.v !== 1) throw new Error('Unknown version')
-      setProjectName(state.projectName || 'Untitled Project')
-      setKickoff(state.kickoff || isoDate(new Date()))
-      setDelivery(state.delivery || '')
-      setBizDays(state.bizDays ?? true)
-      setDeliverables(state.deliverables || { ctv: 1, social: 2, cutdown: 0 })
-      setTeamSize(state.teamSize || 1)
-      setSplitStreams(state.splitStreams || false)
-      setFinishing(state.finishing || { color: false, mix: false, resizes: false })
-      setResizeFormats(state.resizeFormats || 4)
-      setSelectedFormats(state.selectedFormats || ['9:16', '4:5', '1:1', '16:9'])
-      // Rebuild phases then apply manual overrides from saved state
-      const newPhases = buildDefaultPhases(
-        state.deliverables || { ctv: 1, social: 2, cutdown: 0 },
-        state.teamSize || 1,
-        state.finishing || { color: false, mix: false, resizes: false },
-        state.resizeFormats || 4,
-        state.splitStreams || false,
-      )
-      if (state.phases) {
-        setPhases(newPhases.map(np => {
-          const saved = state.phases.find(sp => sp.name === np.name)
-          if (!saved) return np
-          return { ...np, manualDuration: saved.manualDuration || null, manualStartOffset: saved.manualStartOffset ?? null, enabled: saved.enabled ?? true, type: saved.type || np.type }
-        }))
-      } else {
-        setPhases(newPhases)
-      }
+      applyScheduleState(state)
       setLoadInput('')
       setSaveMsg('Loaded!')
       setTimeout(() => setSaveMsg(''), 2000)
@@ -830,7 +851,31 @@ export default function App() {
       setSaveMsg('Invalid code')
       setTimeout(() => setSaveMsg(''), 2000)
     }
-  }, [loadInput])
+  }, [loadInput, applyScheduleState])
+
+  const handleAiGenerate = useCallback(async () => {
+    if (!aiPrompt.trim()) return
+    setAiLoading(true)
+    setAiError('')
+    if (aiPassphrase) sessionStorage.setItem('postrack_pass', aiPassphrase)
+    try {
+      const res = await fetch('/.netlify/functions/generate-schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passphrase: aiPassphrase, prompt: aiPrompt }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`)
+      applyScheduleState(data.schedule)
+      setShowAiPanel(false)
+      setAiSuccess(`Schedule generated: "${data.schedule.projectName || 'Untitled'}" — ${data.schedule.phases?.length || 0} phases`)
+      setTimeout(() => setAiSuccess(''), 4000)
+    } catch (err) {
+      setAiError(err.message)
+    } finally {
+      setAiLoading(false)
+    }
+  }, [aiPrompt, aiPassphrase, applyScheduleState])
 
   const handleClear = useCallback(() => {
     const freshDeliverables = { ctv: 1, social: 2, cutdown: 0 }
@@ -851,6 +896,7 @@ export default function App() {
   }, [])
 
   const rebuildPhases = useCallback(() => {
+    if (skipRebuildRef.current) { skipRebuildRef.current = false; return }
     const newPhases = buildDefaultPhases(deliverables, teamSize, finishing, resizeFormats, splitStreams)
     setPhases(prev => newPhases.map(np => {
       const existing = prev.find(p => p.name === np.name)
@@ -983,7 +1029,48 @@ export default function App() {
               className="flex items-center gap-2.5 px-6 py-3 rounded-md text-[11px] font-mono font-semibold tracking-[0.1em] uppercase transition-all duration-300 cursor-pointer bg-bg-elevated text-text-secondary border border-border hover:border-danger/40 hover:text-danger">
               <Icon.X s={11} /> Clear
             </button>
+            <button onClick={() => { setShowAiPanel(!showAiPanel); setShowSaveLoad(false) }}
+              className={`flex items-center gap-2.5 px-6 py-3 rounded-md text-[11px] font-mono font-semibold tracking-[0.1em] uppercase transition-all duration-300 cursor-pointer border ${showAiPanel ? 'bg-internal-bg2 text-internal border-internal-border' : 'bg-bg-elevated text-text-secondary border-border hover:border-border-hover hover:text-text-primary'}`}>
+              AI Generate
+            </button>
           </div>
+          {showAiPanel && (
+            <div className="mt-5 max-w-lg mx-auto bg-bg-card border border-border rounded-lg p-5 space-y-4">
+              <div>
+                <label className="text-[11px] font-mono font-semibold tracking-wider uppercase text-text-muted block mb-2">Team Passphrase</label>
+                <div className="relative">
+                  <input type={showPassphrase ? 'text' : 'password'} value={aiPassphrase} onChange={(e) => setAiPassphrase(e.target.value)}
+                    placeholder="Enter team code..."
+                    className="w-full bg-bg-elevated border border-border rounded px-3 py-2 pr-9 text-[11px] font-mono text-text-primary outline-none focus:border-warm/40 transition-colors" />
+                  <button type="button" onClick={() => setShowPassphrase(!showPassphrase)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-text-dim hover:text-text-secondary transition-colors cursor-pointer">
+                    {showPassphrase ? <Icon.EyeOff s={13} /> : <Icon.Eye s={13} />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="text-[11px] font-mono font-semibold tracking-wider uppercase text-text-muted block mb-2">Describe Your Project</label>
+                <textarea value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)}
+                  placeholder="e.g. 30-second Nike brand spot with 15 social cuts and 5 cutdowns. 2 editors, need it delivered by June 20. Include color grade and audio mix."
+                  rows={4}
+                  className="w-full bg-bg-elevated border border-border rounded px-3 py-2.5 text-[12px] font-mono text-text-primary outline-none focus:border-warm/40 transition-colors resize-none leading-relaxed" />
+              </div>
+              <button onClick={handleAiGenerate} disabled={aiLoading || !aiPrompt.trim()}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded text-[11px] font-mono font-semibold uppercase tracking-wider cursor-pointer transition-all border disabled:opacity-30 disabled:cursor-default"
+                style={{ background: 'rgba(107, 170, 255, 0.12)', color: 'var(--color-internal)', borderColor: 'rgba(107, 170, 255, 0.3)' }}>
+                {aiLoading ? 'Generating...' : 'Generate Schedule'}
+              </button>
+              {aiError && (
+                <div className="text-center text-[11px] font-mono font-semibold text-danger">{aiError}</div>
+              )}
+            </div>
+          )}
+          {aiSuccess && (
+            <div className="mt-5 max-w-lg mx-auto flex items-center justify-center gap-2 px-5 py-3 rounded-lg border bg-success/12 border-success/25">
+              <Icon.Check s={13} />
+              <span className="text-[12px] font-mono font-semibold text-success">{aiSuccess}</span>
+            </div>
+          )}
           {showSaveLoad && (
             <div className="mt-5 max-w-lg mx-auto bg-bg-card border border-border rounded-lg p-5 space-y-4">
               <div className="flex gap-2">

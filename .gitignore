@@ -1,5 +1,7 @@
 node_modules
 dist
+.env
+.netlify
 dist-ssr
 *.local
 .DS_Store
