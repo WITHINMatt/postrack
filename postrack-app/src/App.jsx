@@ -57,6 +57,7 @@ const Icon = {
   Copy: ({ s = 14 }) => <svg width={s} height={s} viewBox="0 0 14 14" fill="none"><rect x="4.5" y="4.5" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.1" /><path d="M9.5 4.5V3a1.5 1.5 0 00-1.5-1.5H3A1.5 1.5 0 001.5 3v5A1.5 1.5 0 003 9.5h1.5" stroke="currentColor" strokeWidth="1.1" /></svg>,
   Warn: ({ s = 14 }) => <svg width={s} height={s} viewBox="0 0 14 14" fill="none"><path d="M7 1L1 13h12L7 1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" /><path d="M7 5.5v3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /><circle cx="7" cy="10.5" r="0.6" fill="currentColor" /></svg>,
   Parallel: ({ s = 12 }) => <svg width={s} height={s} viewBox="0 0 12 12" fill="none"><path d="M2 3h8M2 6h6M2 9h8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>,
+  Grip: ({ s = 12 }) => <svg width={s} height={s} viewBox="0 0 12 12" fill="none"><circle cx="4" cy="2.5" r="1" fill="currentColor"/><circle cx="8" cy="2.5" r="1" fill="currentColor"/><circle cx="4" cy="6" r="1" fill="currentColor"/><circle cx="8" cy="6" r="1" fill="currentColor"/><circle cx="4" cy="9.5" r="1" fill="currentColor"/><circle cx="8" cy="9.5" r="1" fill="currentColor"/></svg>,
 }
 
 // ─── Small Components ────────────────────────────────────────────────
@@ -115,7 +116,7 @@ function TypeBadge({ type }) {
 
 // ─── Phase Row ───────────────────────────────────────────────────────
 
-function PhaseRow({ phase, index, total, onUpdate, onRemove, onMove }) {
+function PhaseRow({ phase, index, total, onUpdate, onRemove, onDragStart, dragOver, isDragging }) {
   const [editName, setEditName] = useState(false)
   const [editDur, setEditDur] = useState(false)
   const nameRef = useRef(null)
@@ -128,10 +129,10 @@ function PhaseRow({ phase, index, total, onUpdate, onRemove, onMove }) {
   const isParallel = phase.lane !== undefined
 
   return (
-    <div className={`phase-row group flex items-center gap-4 px-6 py-4 border-b transition-all duration-200 ${phase.enabled ? 'border-border-subtle hover:bg-bg-card-hover' : 'border-border-subtle/50 opacity-30'}`}>
-      <div className="flex flex-col items-center gap-0.5 w-4">
-        <button onClick={() => onMove(index, -1)} disabled={index === 0} className="text-text-dim hover:text-text-secondary disabled:opacity-0 transition-all cursor-pointer disabled:cursor-default p-0.5"><Icon.Up /></button>
-        <button onClick={() => onMove(index, 1)} disabled={index === total - 1} className="text-text-dim hover:text-text-secondary disabled:opacity-0 transition-all cursor-pointer disabled:cursor-default p-0.5"><Icon.Down /></button>
+    <div className={`phase-row group flex items-center gap-4 px-6 py-4 border-b transition-all duration-200 ${isDragging ? 'opacity-30' : ''} ${dragOver === 'above' ? 'border-t-2 border-t-warm' : dragOver === 'below' ? 'border-b-2 border-b-warm' : ''} ${phase.enabled ? 'border-border-subtle hover:bg-bg-card-hover' : 'border-border-subtle/50 opacity-30'}`}>
+      <div className="w-4 flex items-center justify-center cursor-grab active:cursor-grabbing text-text-dim hover:text-text-secondary transition-colors"
+        onMouseDown={(e) => { e.preventDefault(); onDragStart(index, e.clientY) }}>
+        <Icon.Grip s={12} />
       </div>
       <Checkbox checked={phase.enabled} onChange={() => onUpdate({ enabled: !phase.enabled })} color={s.color} />
       <div className="w-[4px] h-8 rounded-full flex-shrink-0" style={{ background: phase.enabled ? s.color : 'var(--color-border)' }} />
@@ -189,9 +190,71 @@ function PhaseRow({ phase, index, total, onUpdate, onRemove, onMove }) {
   )
 }
 
+// ─── Draggable Phase List ────────────────────────────────────────────
+
+function PhaseList({ phases, scheduled, updatePhase, removePhase, reorderPhase }) {
+  const [dragIdx, setDragIdx] = useState(null)
+  const [hoverIdx, setHoverIdx] = useState(null)
+  const rowRefs = useRef([])
+
+  const handleDragStart = useCallback((idx, startY) => {
+    setDragIdx(idx)
+    const onMouseMove = (e) => {
+      // Find which row we're over
+      for (let i = 0; i < rowRefs.current.length; i++) {
+        const el = rowRefs.current[i]
+        if (!el) continue
+        const rect = el.getBoundingClientRect()
+        if (e.clientY >= rect.top && e.clientY < rect.bottom) {
+          setHoverIdx(i)
+          return
+        }
+      }
+    }
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      setDragIdx(cur => {
+        setHoverIdx(hover => {
+          if (cur !== null && hover !== null && cur !== hover) reorderPhase(cur, hover)
+          return null
+        })
+        return null
+      })
+    }
+    document.body.style.cursor = 'grabbing'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }, [reorderPhase])
+
+  return (
+    <div>
+      {phases.map((phase, i) => {
+        const sched = scheduled.find(s => s.id === phase.id)
+        let dragOver = null
+        if (dragIdx !== null && hoverIdx === i && dragIdx !== i) {
+          dragOver = dragIdx < i ? 'below' : 'above'
+        }
+        return (
+          <div key={phase.id} ref={el => rowRefs.current[i] = el}>
+            <PhaseRow
+              phase={{ ...phase, effectiveDuration: phase.manualDuration || phase.baseDuration, lane: sched?.lane }}
+              index={i} total={phases.length}
+              onUpdate={(u) => updatePhase(phase.id, u)} onRemove={removePhase}
+              onDragStart={handleDragStart} dragOver={dragOver} isDragging={dragIdx === i} />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── Row-based Gantt ─────────────────────────────────────────────────
 
-function GanttChart({ phases, timelineStart, timelineEnd, onDurationChange, onMovePhase, kickoffDate, bizDays }) {
+function GanttChart({ phases, timelineStart, timelineEnd, onDurationChange, onMovePhase, onReorder, kickoffDate, bizDays }) {
   const containerRef = useRef(null)
   const phasesRef = useRef(phases)
   const timeRef = useRef({ start: timelineStart, end: timelineEnd })
@@ -260,32 +323,61 @@ function GanttChart({ phases, timelineStart, timelineEnd, onDurationChange, onMo
     document.addEventListener('mouseup', onMouseUp)
   }, [onDurationChange])
 
-  // Drag bar body to move in time
+  // Drag bar body — horizontal moves in time, vertical reorders
+  const rowHeight = 42 // h-10 (40px) + mb-[2px]
   const handleMoveDrag = useCallback((e, phaseId) => {
     e.preventDefault()
     const startX = e.clientX
+    const startY = e.clientY
     const phase = phasesRef.current.find(p => p.id === phaseId)
     if (!phase) return
+    const phaseIdx = phasesRef.current.findIndex(p => p.id === phaseId)
     const pxPerDay = getSnapshotPxPerDay()
     const kickoff = new Date(kickoffDate + 'T00:00:00')
     const currentOffset = bizDays ? countBiz(kickoff, phase.startDate) : countCal(kickoff, phase.startDate)
     let lastOffset = currentOffset
+    let mode = null // 'horizontal' or 'vertical'
+    let lastRowDelta = 0
 
     const onMouseMove = (ev) => {
       const dx = ev.clientX - startX
-      const deltaDays = Math.round(dx / pxPerDay)
-      const newOffset = Math.max(0, currentOffset + deltaDays)
-      if (newOffset !== lastOffset) { lastOffset = newOffset; onMovePhase(phaseId, newOffset) }
+      const dy = ev.clientY - startY
+
+      // Determine mode on first significant movement
+      if (!mode) {
+        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+          mode = Math.abs(dy) > Math.abs(dx) ? 'vertical' : 'horizontal'
+          document.body.style.cursor = mode === 'vertical' ? 'grabbing' : 'grab'
+        }
+        return
+      }
+
+      if (mode === 'horizontal') {
+        const deltaDays = Math.round(dx / pxPerDay)
+        const newOffset = Math.max(0, currentOffset + deltaDays)
+        if (newOffset !== lastOffset) { lastOffset = newOffset; onMovePhase(phaseId, newOffset) }
+      } else {
+        const rowDelta = Math.round(dy / rowHeight)
+        if (rowDelta !== lastRowDelta) {
+          const curPhases = phasesRef.current
+          const targetIdx = Math.max(0, Math.min(curPhases.length - 1, phaseIdx + rowDelta))
+          const targetId = curPhases[targetIdx]?.id
+          if (targetId && targetId !== phaseId) {
+            onReorder(phaseId, targetId)
+          }
+          lastRowDelta = rowDelta
+        }
+      }
     }
     const onMouseUp = () => {
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseup', onMouseUp)
       document.body.style.cursor = ''; document.body.style.userSelect = ''
     }
-    document.body.style.cursor = 'grab'; document.body.style.userSelect = 'none'
+    document.body.style.userSelect = 'none'
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)
-  }, [onMovePhase, kickoffDate, bizDays])
+  }, [onMovePhase, onReorder, kickoffDate, bizDays])
 
   // Double-click to reset position to auto
   const handleDoubleClick = useCallback((phaseId) => {
@@ -348,8 +440,11 @@ function GanttChart({ phases, timelineStart, timelineEnd, onDurationChange, onMo
               onDoubleClick={() => handleDoubleClick(p.id)}
             >
               <div className="absolute top-0 left-0 right-0 h-[2px] rounded-t-[4px]" style={{ background: s.color }} />
-              {isPinned && <div className="absolute top-0 left-0 w-1 h-full" style={{ background: 'var(--color-warm)', opacity: 0.4 }} />}
-              <span className="text-[10px] font-semibold truncate px-2.5 relative z-10 whitespace-nowrap pointer-events-none" style={{ color: s.color }}>
+              {/* Grip dots */}
+              <div className="flex-shrink-0 pl-1.5 pr-2 pointer-events-none opacity-40 group-hover/bar:opacity-70 transition-opacity" style={{ color: s.color }}>
+                <Icon.Grip s={8} />
+              </div>
+              <span className="text-[10px] font-semibold truncate pr-2.5 relative z-10 whitespace-nowrap pointer-events-none" style={{ color: s.color }}>
                 {width > 6 ? p.name : ''}{width > 3 ? ` ${p.effectiveDuration}d` : ''}
               </span>
               <div
@@ -737,6 +832,24 @@ export default function App() {
     }
   }, [loadInput])
 
+  const handleClear = useCallback(() => {
+    const freshDeliverables = { ctv: 1, social: 2, cutdown: 0 }
+    const freshFinishing = { color: false, mix: false, resizes: false }
+    setProjectName('Untitled Project')
+    setKickoff(isoDate(new Date()))
+    setDelivery('')
+    setBizDays(true)
+    setDeliverables(freshDeliverables)
+    setTeamSize(1)
+    setSplitStreams(false)
+    setFinishing(freshFinishing)
+    setResizeFormats(4)
+    setSelectedFormats(['9:16', '4:5', '1:1', '16:9'])
+    setPhases(buildDefaultPhases(freshDeliverables, 1, freshFinishing, 4, false))
+    setSaveCode('')
+    setLoadInput('')
+  }, [])
+
   const rebuildPhases = useCallback(() => {
     const newPhases = buildDefaultPhases(deliverables, teamSize, finishing, resizeFormats, splitStreams)
     setPhases(prev => newPhases.map(np => {
@@ -769,7 +882,28 @@ export default function App() {
 
   const updatePhase = useCallback((id, u) => setPhases(prev => prev.map(p => p.id === id ? { ...p, ...u } : p)), [])
   const removePhase = useCallback((id) => setPhases(prev => prev.filter(p => p.id !== id)), [])
-  const movePhase = useCallback((idx, dir) => { setPhases(prev => { const n = [...prev]; const t = idx + dir; if (t < 0 || t >= n.length) return prev; [n[idx], n[t]] = [n[t], n[idx]]; return n }) }, [])
+  const reorderPhase = useCallback((fromIdx, toIdx) => {
+    if (fromIdx === toIdx) return
+    setPhases(prev => {
+      const n = [...prev]
+      const [item] = n.splice(fromIdx, 1)
+      n.splice(toIdx, 0, item)
+      return n
+    })
+  }, [])
+
+  // Gantt reorder works on scheduled (enabled-only) indices — map back to full phases array
+  const reorderByIds = useCallback((fromId, toId) => {
+    setPhases(prev => {
+      const fromIdx = prev.findIndex(p => p.id === fromId)
+      const toIdx = prev.findIndex(p => p.id === toId)
+      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return prev
+      const n = [...prev]
+      const [item] = n.splice(fromIdx, 1)
+      n.splice(toIdx, 0, item)
+      return n
+    })
+  }, [])
   const addPhase = useCallback(() => { setPhases(prev => [...prev, { id: genId(), name: 'New Phase', baseDuration: 2, type: 'internal', enabled: true, manualDuration: null, manualStartOffset: null }]) }, [])
   const handleGanttDrag = useCallback((phaseId, newDuration) => { setPhases(prev => prev.map(p => p.id === phaseId ? { ...p, manualDuration: newDuration } : p)) }, [])
   const handleGanttMove = useCallback((phaseId, offset) => { setPhases(prev => prev.map(p => p.id === phaseId ? { ...p, manualStartOffset: offset } : p)) }, [])
@@ -801,11 +935,11 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-bg-primary">
-      {/* ═══ TOP BAR ═══ */}
+    <div className="min-h-screen bg-bg-primary w-full">
+      {/* ═══ TOP BAR — full width, left-aligned ═══ */}
       <div className="relative">
         <div className="h-[3px] w-full" style={{ background: 'linear-gradient(90deg, var(--color-internal) 0%, var(--color-warm) 35%, var(--color-client) 65%, transparent 100%)' }} />
-        <div className="max-w-[1060px] mx-auto px-6 md:px-14">
+        <div className="px-6 md:px-14">
           <div className="flex items-center gap-2.5 pt-5 pb-2">
             <div className="flex gap-[3px] items-end">
               <div className="w-[4px] h-3 rounded-b-full" style={{ background: 'var(--color-internal)' }} />
@@ -817,7 +951,8 @@ export default function App() {
         </div>
       </div>
 
-      <div className="max-w-[1060px] mx-auto px-6 md:px-14">
+      {/* ═══ CONTENT — centered ═══ */}
+      <div className="centered-content">
 
         {/* ═══ HEADER ═══ */}
         <header className="pt-8 pb-12 text-center">
@@ -843,6 +978,10 @@ export default function App() {
             <button onClick={() => setShowSaveLoad(!showSaveLoad)}
               className="flex items-center gap-2.5 px-6 py-3 rounded-md text-[11px] font-mono font-semibold tracking-[0.1em] uppercase transition-all duration-300 cursor-pointer bg-bg-elevated text-text-secondary border border-border hover:border-border-hover hover:text-text-primary">
               Save / Load
+            </button>
+            <button onClick={handleClear}
+              className="flex items-center gap-2.5 px-6 py-3 rounded-md text-[11px] font-mono font-semibold tracking-[0.1em] uppercase transition-all duration-300 cursor-pointer bg-bg-elevated text-text-secondary border border-border hover:border-danger/40 hover:text-danger">
+              <Icon.X s={11} /> Clear
             </button>
           </div>
           {showSaveLoad && (
@@ -1047,17 +1186,7 @@ export default function App() {
               <Icon.Plus s={11} /> Add Phase
             </button>
           </div>
-          <div>
-            {phases.map((phase, i) => {
-              const sched = scheduled.find(s => s.id === phase.id)
-              return (
-                <PhaseRow key={phase.id}
-                  phase={{ ...phase, effectiveDuration: phase.manualDuration || phase.baseDuration, lane: sched?.lane }}
-                  index={i} total={phases.length}
-                  onUpdate={(u) => updatePhase(phase.id, u)} onRemove={removePhase} onMove={movePhase} />
-              )
-            })}
-          </div>
+          <PhaseList phases={phases} scheduled={scheduled} updatePhase={updatePhase} removePhase={removePhase} reorderPhase={reorderPhase} />
         </section>
 
         {/* ═══ TIMELINE ═══ */}
@@ -1077,7 +1206,7 @@ export default function App() {
                 ))}
               </div>
             </div>
-            <GanttChart phases={scheduled} timelineStart={timelineStart} timelineEnd={timelineEnd} onDurationChange={handleGanttDrag} onMovePhase={handleGanttMove} kickoffDate={kickoff} bizDays={bizDays} />
+            <GanttChart phases={scheduled} timelineStart={timelineStart} timelineEnd={timelineEnd} onDurationChange={handleGanttDrag} onMovePhase={handleGanttMove} onReorder={reorderByIds} kickoffDate={kickoff} bizDays={bizDays} />
           </section>
         )}
 
