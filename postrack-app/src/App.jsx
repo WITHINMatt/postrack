@@ -786,6 +786,41 @@ export default function App() {
   const [aiPassphrase, setAiPassphrase] = useState(() => sessionStorage.getItem('postrack_pass') || '')
   const [showPassphrase, setShowPassphrase] = useState(false)
 
+  // Asana integration state (PAT-based, no OAuth needed)
+  const [showAsanaPanel, setShowAsanaPanel] = useState(false)
+  const [asanaAuthed, setAsanaAuthed] = useState(false)
+  const [asanaProjects, setAsanaProjects] = useState([])
+  const [asanaSelectedProject, setAsanaSelectedProject] = useState('')
+  const [asanaProjectSearch, setAsanaProjectSearch] = useState('')
+  const [asanaLoading, setAsanaLoading] = useState(false)
+  const [asanaError, setAsanaError] = useState('')
+  const [asanaSuccess, setAsanaSuccess] = useState('')
+  const [asanaProjectsLoading, setAsanaProjectsLoading] = useState(false)
+
+  // Fetch projects via server function (uses PAT)
+  const searchTimerRef = useRef(null)
+  const fetchAsanaProjects = useCallback(async (query = '') => {
+    const pass = aiPassphrase || sessionStorage.getItem('postrack_pass') || ''
+    if (!pass) return
+    setAsanaProjectsLoading(true)
+    try {
+      const qs = query ? `?q=${encodeURIComponent(query)}&pass=${encodeURIComponent(pass)}` : `?pass=${encodeURIComponent(pass)}`
+      const res = await fetch(`/.netlify/functions/asana-projects${qs}`)
+      if (res.status === 403) { setAsanaAuthed(false); setAsanaError('Invalid passphrase'); return }
+      const data = await res.json()
+      if (data.projects) { setAsanaProjects(data.projects); setAsanaAuthed(true); setAsanaError('') }
+    } catch {}
+    finally { setAsanaProjectsLoading(false) }
+  }, [aiPassphrase])
+
+  // Debounced search
+  const handleAsanaSearch = useCallback((value) => {
+    setAsanaProjectSearch(value)
+    setAsanaSelectedProject('')
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    searchTimerRef.current = setTimeout(() => fetchAsanaProjects(value), 300)
+  }, [fetchAsanaProjects])
+
   const generateSaveCode = useCallback(() => {
     const state = {
       v: 1, projectName, kickoff, delivery, bizDays, deliverables, teamSize,
@@ -908,6 +943,43 @@ export default function App() {
   useEffect(() => { rebuildPhases() }, [rebuildPhases])
 
   const scheduled = useMemo(() => schedulePhases(phases, kickoff, bizDays, delivery), [phases, kickoff, bizDays, delivery])
+
+  const handleAsanaExport = useCallback(async () => {
+    if (!asanaSelectedProject || !scheduled.length) return
+    setAsanaLoading(true)
+    setAsanaError('')
+    setAsanaSuccess('')
+    try {
+      const dateRe = /^\d{4}-\d{2}-\d{2}$/
+      const exportPhases = scheduled.map(p => {
+        const startStr = isoDate(p.startDate)
+        const dueDate = new Date(p.endDate)
+        dueDate.setDate(dueDate.getDate() - 1)
+        if (bizDays) { while (dueDate.getDay() === 0 || dueDate.getDay() === 6) dueDate.setDate(dueDate.getDate() - 1) }
+        let dueStr = isoDate(dueDate)
+        if (dueStr < startStr) dueStr = startStr
+        return { name: p.name, startDate: startStr, endDate: dueStr, duration: p.effectiveDuration, type: p.type, lane: p.lane }
+      })
+      const res = await fetch('/.netlify/functions/asana-export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectGid: asanaSelectedProject, sectionName: projectName, phases: exportPhases, passphrase: aiPassphrase || sessionStorage.getItem('postrack_pass') || '' }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Export failed')
+      if (data.errors?.length > 0) {
+        setAsanaError(`${data.tasksCreated}/${data.totalPhases} tasks created. Error: ${data.errors[0].msg}`)
+      } else {
+        setAsanaSuccess(`Exported ${data.tasksCreated} tasks to Asana`)
+        setTimeout(() => setAsanaSuccess(''), 4000)
+        setShowAsanaPanel(false)
+      }
+    } catch (err) {
+      setAsanaError(err.message)
+    } finally {
+      setAsanaLoading(false)
+    }
+  }, [asanaSelectedProject, scheduled, projectName, bizDays])
 
   const span = useMemo(() => {
     if (!scheduled.length) return { biz: 0, cal: 0 }
@@ -1033,6 +1105,10 @@ export default function App() {
               className={`flex items-center gap-2.5 px-6 py-3 rounded-md text-[11px] font-mono font-semibold tracking-[0.1em] uppercase transition-all duration-300 cursor-pointer border ${showAiPanel ? 'bg-internal-bg2 text-internal border-internal-border' : 'bg-bg-elevated text-text-secondary border-border hover:border-border-hover hover:text-text-primary'}`}>
               AI Generate
             </button>
+            <button onClick={() => { setShowAsanaPanel(!showAsanaPanel); setShowAiPanel(false); setShowSaveLoad(false) }}
+              className={`flex items-center gap-2.5 px-6 py-3 rounded-md text-[11px] font-mono font-semibold tracking-[0.1em] uppercase transition-all duration-300 cursor-pointer border ${showAsanaPanel ? 'bg-client-bg2 text-client border-client-border' : 'bg-bg-elevated text-text-secondary border-border hover:border-border-hover hover:text-text-primary'}`}>
+              Asana
+            </button>
           </div>
           {showAiPanel && (
             <div className="mt-5 max-w-lg mx-auto bg-bg-card border border-border rounded-lg p-5 space-y-4">
@@ -1069,6 +1145,72 @@ export default function App() {
             <div className="mt-5 max-w-lg mx-auto flex items-center justify-center gap-2 px-5 py-3 rounded-lg border bg-success/12 border-success/25">
               <Icon.Check s={13} />
               <span className="text-[12px] font-mono font-semibold text-success">{aiSuccess}</span>
+            </div>
+          )}
+          {asanaSuccess && (
+            <div className="mt-5 max-w-lg mx-auto flex items-center justify-center gap-2 px-5 py-3 rounded-lg border bg-success/12 border-success/25">
+              <Icon.Check s={13} />
+              <span className="text-[12px] font-mono font-semibold text-success">{asanaSuccess}</span>
+            </div>
+          )}
+          {showAsanaPanel && (
+            <div className="mt-5 bg-bg-card border border-border rounded-lg p-5 space-y-4" style={{ maxWidth: '480px', marginLeft: 'auto', marginRight: 'auto' }}>
+              {!asanaAuthed ? (
+                <div className="space-y-3">
+                  <label className="text-[11px] font-mono font-semibold tracking-wider uppercase text-text-muted block mb-2">Team Passphrase</label>
+                  <div className="relative">
+                    <input type={showPassphrase ? 'text' : 'password'} value={aiPassphrase} onChange={(e) => setAiPassphrase(e.target.value)}
+                      placeholder="Enter team code..."
+                      onKeyDown={(e) => { if (e.key === 'Enter' && aiPassphrase) { sessionStorage.setItem('postrack_pass', aiPassphrase); fetchAsanaProjects() } }}
+                      className="w-full bg-bg-elevated border border-border rounded px-3 py-2 pr-9 text-[11px] font-mono text-text-primary outline-none focus:border-warm/40 transition-colors" />
+                    <button type="button" onClick={() => setShowPassphrase(!showPassphrase)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-text-dim hover:text-text-secondary transition-colors cursor-pointer">
+                      {showPassphrase ? <Icon.EyeOff s={13} /> : <Icon.Eye s={13} />}
+                    </button>
+                  </div>
+                  <button onClick={() => { if (aiPassphrase) { sessionStorage.setItem('postrack_pass', aiPassphrase); fetchAsanaProjects() } }}
+                    disabled={!aiPassphrase}
+                    className="w-full px-4 py-2.5 rounded text-[11px] font-mono font-semibold uppercase tracking-wider cursor-pointer transition-all border disabled:opacity-30 disabled:cursor-default"
+                    style={{ background: 'rgba(224, 176, 96, 0.12)', color: 'var(--color-client)', borderColor: 'rgba(224, 176, 96, 0.3)' }}>
+                    Connect
+                  </button>
+                  {asanaError && <div className="text-center text-[11px] font-mono font-semibold text-danger">{asanaError}</div>}
+                </div>
+              ) : (<>
+              <div>
+                <label className="text-[11px] font-mono font-semibold tracking-wider uppercase text-text-muted block mb-2">Search Projects</label>
+                <input type="text" value={asanaProjectSearch} onChange={(e) => handleAsanaSearch(e.target.value)}
+                  placeholder="Type to search Asana projects..."
+                  className="w-full bg-bg-elevated border border-border rounded px-3 py-2.5 text-[12px] font-mono text-text-primary outline-none focus:border-warm/40 transition-colors" />
+                <div className="mt-2 max-h-48 overflow-y-auto rounded border border-border-subtle">
+                  {asanaProjectsLoading ? (
+                    <div className="px-3 py-3 text-[11px] font-mono text-text-dim">Searching...</div>
+                  ) : asanaProjects.length === 0 ? (
+                    <div className="px-3 py-3 text-[11px] font-mono text-text-dim">{asanaProjectSearch ? 'No projects found' : 'Type to search or browse projects'}</div>
+                  ) : (
+                    asanaProjects.map(p => (
+                      <button key={p.gid} onClick={() => { setAsanaSelectedProject(p.gid); setAsanaProjectSearch(p.name) }}
+                        className={`w-full text-left px-3 py-2.5 text-[12px] font-mono transition-colors cursor-pointer border-b border-border-subtle/30 last:border-0 ${asanaSelectedProject === p.gid ? 'bg-client-bg2 text-client' : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'}`}>
+                        <span className="block truncate">{p.name}</span>
+                        <span className="text-[9px] text-text-dim">{p.workspace}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+              <div className="bg-bg-elevated border border-border-subtle rounded p-3">
+                <span className="text-[10px] font-mono text-text-muted uppercase tracking-wider block mb-1">Will create</span>
+                <span className="text-[12px] font-mono text-text-primary">Section: &ldquo;{projectName}&rdquo; with {scheduled.length} tasks</span>
+              </div>
+              <button onClick={handleAsanaExport} disabled={asanaLoading || !asanaSelectedProject || !scheduled.length}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded text-[11px] font-mono font-semibold uppercase tracking-wider cursor-pointer transition-all border disabled:opacity-30 disabled:cursor-default"
+                style={{ background: 'rgba(224, 176, 96, 0.12)', color: 'var(--color-client)', borderColor: 'rgba(224, 176, 96, 0.3)' }}>
+                {asanaLoading ? 'Exporting...' : 'Export to Asana'}
+              </button>
+              {asanaError && (
+                <div className="text-center text-[11px] font-mono font-semibold text-danger">{asanaError}</div>
+              )}
+              </>)}
             </div>
           )}
           {showSaveLoad && (
