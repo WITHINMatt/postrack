@@ -799,8 +799,8 @@ export default function App() {
 
   // Fetch projects via server function (uses PAT)
   const searchTimerRef = useRef(null)
-  const fetchAsanaProjects = useCallback(async (query = '') => {
-    const pass = aiPassphrase || sessionStorage.getItem('postrack_pass') || ''
+  const fetchAsanaProjects = useCallback(async (query = '', passOverride = '') => {
+    const pass = passOverride || aiPassphrase || sessionStorage.getItem('postrack_pass') || ''
     if (!pass) return
     setAsanaProjectsLoading(true)
     try {
@@ -1161,14 +1161,14 @@ export default function App() {
                   <div className="relative">
                     <input type={showPassphrase ? 'text' : 'password'} value={aiPassphrase} onChange={(e) => setAiPassphrase(e.target.value)}
                       placeholder="Enter team code..."
-                      onKeyDown={(e) => { if (e.key === 'Enter' && aiPassphrase) { sessionStorage.setItem('postrack_pass', aiPassphrase); fetchAsanaProjects() } }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && aiPassphrase) { sessionStorage.setItem('postrack_pass', aiPassphrase); fetchAsanaProjects('', aiPassphrase) } }}
                       className="w-full bg-bg-elevated border border-border rounded px-3 py-2 pr-9 text-[11px] font-mono text-text-primary outline-none focus:border-warm/40 transition-colors" />
                     <button type="button" onClick={() => setShowPassphrase(!showPassphrase)}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-text-dim hover:text-text-secondary transition-colors cursor-pointer">
                       {showPassphrase ? <Icon.EyeOff s={13} /> : <Icon.Eye s={13} />}
                     </button>
                   </div>
-                  <button onClick={() => { if (aiPassphrase) { sessionStorage.setItem('postrack_pass', aiPassphrase); fetchAsanaProjects() } }}
+                  <button onClick={() => { if (aiPassphrase) { sessionStorage.setItem('postrack_pass', aiPassphrase); fetchAsanaProjects('', aiPassphrase) } }}
                     disabled={!aiPassphrase}
                     className="w-full px-4 py-2.5 rounded text-[11px] font-mono font-semibold uppercase tracking-wider cursor-pointer transition-all border disabled:opacity-30 disabled:cursor-default"
                     style={{ background: 'rgba(224, 176, 96, 0.12)', color: 'var(--color-client)', borderColor: 'rgba(224, 176, 96, 0.3)' }}>
