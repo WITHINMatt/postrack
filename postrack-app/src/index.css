@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg-primary: #0b0b0e;
+  --color-bg-secondary: #101014;
+  --color-bg-tertiary: #161619;
+  --color-bg-elevated: #1c1c21;
+  --color-bg-hover: #222228;
+  --color-bg-card: #111115;
+  --color-bg-card-hover: #19191e;
+  --color-border: #2c2c35;
+  --color-border-subtle: #1f1f28;
+  --color-border-hover: #3a3a45;
+  --color-text-primary: #f0ece8;
+  --color-text-secondary: #b0aaa4;
+  --color-text-muted: #7a7470;
+  --color-text-dim: #555050;
+  --color-warm: #eed0cc;
+  --color-warm-mid: #c4a09a;
+  --color-warm-dim: #6b4f4a;
+  --color-warm-bg: rgba(238, 208, 204, 0.05);
+  --color-warm-bg2: rgba(238, 208, 204, 0.10);
+  --color-warm-border: rgba(238, 208, 204, 0.15);
+  --color-internal: #6baaff;
+  --color-internal-dim: #4a80cc;
+  --color-internal-bg: rgba(107, 170, 255, 0.07);
+  --color-internal-bg2: rgba(107, 170, 255, 0.22);
+  --color-internal-border: rgba(107, 170, 255, 0.30);
+  --color-client: #e0b060;
+  --color-client-dim: #b08840;
+  --color-client-bg: rgba(224, 176, 96, 0.07);
+  --color-client-bg2: rgba(224, 176, 96, 0.22);
+  --color-client-border: rgba(224, 176, 96, 0.30);
+  --color-milestone: #cc78dd;
+  --color-milestone-dim: #a058b0;
+  --color-milestone-bg: rgba(204, 120, 221, 0.07);
+  --color-milestone-bg2: rgba(204, 120, 221, 0.22);
+  --color-milestone-border: rgba(204, 120, 221, 0.30);
+  --color-success: #5ec486;
+  --color-danger: #e06060;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html {
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+}
+
+body {
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] { -moz-appearance: textfield; }
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 2px; }
+
+::selection {
+  background: var(--color-warm);
+  color: var(--color-bg-primary);
+}
+
+.gantt-segment {
+  transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.gantt-segment:hover {
+  filter: brightness(1.4);
+  transform: scaleY(1.06);
+}
+
+.phase-row {
+  transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.phase-row:hover {
+  transform: translateX(2px);
+}
